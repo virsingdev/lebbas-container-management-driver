@@ -4,7 +4,8 @@ import { X } from 'lucide-react';
 
 export function QrScanner({ onCode, onClose }: { onCode: (c: string) => void; onClose: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
-  const cb = useRef(onCode); cb.current = onCode;
+  const cb = useRef(onCode);
+  useEffect(() => { cb.current = onCode; }, [onCode]);
   const [err, setErr] = useState('');
   useEffect(() => {
     let stream: MediaStream | undefined; let timer: ReturnType<typeof setInterval> | undefined; let alive = true; let fired = false;

@@ -3,11 +3,12 @@ import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
-import { CheckCircle2, Navigation, QrCode } from 'lucide-react';
+import { CheckCircle2, MapPin, Navigation, QrCode } from 'lucide-react';
 import { type Row, uid } from '@/lib/api';
 import { getFix } from '@/lib/geo';
 import { DONE, useOverlay, useRoutes } from '@/lib/hooks';
 import { enqueue } from '@/lib/sync';
+import { useGeofence } from '@/components/GeofenceMonitor';
 import { QrScanner } from '@/components/QrScanner';
 import { Badge, Btn, Card, ErrorBox, Sheet, Skeleton, inputCls } from '@/components/ui';
 
@@ -17,6 +18,7 @@ function Stop() {
   const sp = useSearchParams(); const router = useRouter();
   const routeId = sp.get('r') ?? ''; const stopId = sp.get('s') ?? '';
   const routes = useRoutes(); const ov = useOverlay();
+  const { nearby } = useGeofence();
   const [verified, setVerified] = useState(false); const [scan, setScan] = useState(false); const [manual, setManual] = useState(''); const [vErr, setVErr] = useState('');
   const [w, setW] = useState(''); const [bags, setBags] = useState(''); const [notes, setNotes] = useState('');
   const [reason, setReason] = useState<null | 'skipped' | 'failed'>(null); const [why, setWhy] = useState('');
@@ -26,6 +28,10 @@ function Stop() {
   if (routes.isLoading) return <Skeleton rows={2} />;
   if (!route || !stop) return <ErrorBox error={new Error('This stop is not in your assigned routes.')} />;
   const c: Row = stop.container; const pend = ov.get(stop.id); const eff: string = pend?.status ?? stop.status; const closed = DONE.includes(eff);
+  const geofenceVerified =
+    Boolean(nearby && nearby.stopId === stop.id && nearby.dwelled) ||
+    (sp.get('geofence') === '1' && eff === 'arrived');
+  const isVerified = verified || geofenceVerified;
   const nav = c.latitude && c.longitude ? `https://www.google.com/maps/dir/?api=1&destination=${c.latitude},${c.longitude}&travelmode=driving` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.address ?? c.location_name)}`;
 
   function check(code: string) {
@@ -60,12 +66,19 @@ function Stop() {
           {(eff === 'pending' || eff === 'en_route') && <Btn v="ghost" disabled={busy} onClick={() => send({ status: 'arrived' }, 'Arrived at')}>I&apos;ve arrived</Btn>}
           <Card className="space-y-3">
             <h2 className="font-semibold">1. Verify container</h2>
-            {verified ? <p className="flex items-center gap-2 font-semibold text-emerald-700"><CheckCircle2 aria-hidden /> Verified {c.container_code}</p> : (
+            {verified ? (
+              <p className="flex items-center gap-2 font-semibold text-emerald-700"><CheckCircle2 aria-hidden /> Verified {c.container_code} (QR)</p>
+            ) : geofenceVerified ? (
+              <p className="flex items-center gap-2 rounded-xl bg-[#F0FDFA] p-3 text-sm font-semibold text-[#0F766E]">
+                <MapPin size={18} aria-hidden /> Verified by GPS geofence{nearby && nearby.stopId === stop.id ? ` (~${Math.round(nearby.distanceM)} m)` : ''}
+              </p>
+            ) : (
               <>
                 <Btn v="ghost" onClick={() => setScan(true)}><QrCode aria-hidden /> Scan QR code</Btn>
                 <div className="flex gap-2"><input className={inputCls} placeholder="Or type the QR code" value={manual} onChange={(e) => setManual(e.target.value)} /><Btn className="!w-28" v="ghost" disabled={!manual.trim()} onClick={() => check(manual)}>Check</Btn></div>
                 {vErr && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-800">{vErr}</p>}
-              </>)}
+              </>
+            )}
             {scan && <QrScanner onCode={check} onClose={() => setScan(false)} />}
           </Card>
           <Card className="space-y-3">
@@ -74,8 +87,8 @@ function Stop() {
             {w !== '' && !wOk && <p className="text-sm text-red-700">Weight must be more than 0.</p>}
             <label className="block text-sm font-medium">Number of bags<input className={inputCls} type="number" inputMode="numeric" min="0" step="1" value={bags} onChange={(e) => setBags(e.target.value)} /></label>
             <label className="block text-sm font-medium">Notes<textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
-            <Btn disabled={!verified || !wOk || busy} onClick={() => send({ status: 'completed', collected_weight_kg: wn, bag_count: Number(bags || 0), collected_at: new Date().toISOString(), ...(notes.trim() ? { notes: notes.trim() } : {}) }, 'Collected')}>{busy ? 'Saving…' : 'Save collection'}</Btn>
-            {!verified && <p className="text-xs text-slate-500">Verify the container first so the collection is never saved for the wrong container.</p>}
+            <Btn disabled={!isVerified || !wOk || busy} onClick={() => send({ status: 'completed', collected_weight_kg: wn, bag_count: Number(bags || 0), collected_at: new Date().toISOString(), ...(notes.trim() ? { notes: notes.trim() } : {}) }, 'Collected')}>{busy ? 'Saving…' : 'Save collection'}</Btn>
+            {!isVerified && <p className="text-xs text-slate-500">Scan the QR code, enter it above, or dwell near the container (GPS geofence) to verify.</p>}
             <p className="text-xs text-slate-500">Photos are not available yet: the server has no photo upload endpoint.</p>
           </Card>
           <div className="grid grid-cols-2 gap-3"><Btn v="warn" onClick={() => setReason('skipped')}>Skip stop</Btn><Btn v="danger" onClick={() => setReason('failed')}>Can&apos;t collect</Btn></div>

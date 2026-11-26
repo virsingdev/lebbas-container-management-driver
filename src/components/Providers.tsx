@@ -1,5 +1,6 @@
 'use client';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Toaster, toast } from 'sonner';
@@ -14,15 +15,16 @@ type Status = { net: Net; syncing: boolean; pending: number; attention: number }
 const Ctx = createContext<{ driver: Row; status: Status; ping: () => void; ops: Op[] } | null>(null);
 export function useDriver() { const c = useContext(Ctx); if (!c) throw new Error('useDriver outside provider'); return c; }
 
-async function signOut() {
-  await fetch('/api/auth/logout', { method: 'POST' }).catch(() => null);
-  await db.cache.clear(); // route data is wiped; unsynced operations stay on the device for this driver
-  location.href = '/login';
-}
-
 function Gate({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const qc = useQueryClient();
   const me = useQuery({ queryKey: ['driver'], queryFn: () => cached<Row>('driver', () => api('/driver/me')), retry: false, networkMode: 'always' });
+  const signOut = useCallback(async () => {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => null);
+    await db.cache.clear(); // route data is wiped; unsynced operations stay on the device for this driver
+    qc.clear();
+    router.replace('/login');
+  }, [qc, router]);
   const [net, setNet] = useState<Net>('online');
   const driverId = me.data?.data.id as string | undefined;
   const ops = useLiveQuery(() => (driverId ? db.ops.where('driverId').equals(driverId).toArray() : []), [driverId], [] as Op[]);

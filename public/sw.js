@@ -1,6 +1,6 @@
 // LEBBAS Driver service worker. Caches app shell/static assets only. API responses are never cached here
 // (route data is stored in IndexedDB by the app). Bump VERSION to roll out a new cache.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const STATIC = `lcd-static-${VERSION}`;
 const PAGES = `lcd-pages-${VERSION}`;
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(STATIC).then((c) => c.addAll(['/offline.html', '/manifest.webmanifest', '/icons/icon-192.png']))); });

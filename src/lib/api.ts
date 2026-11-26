@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- backend payloads are normalised at the edges */
 export type Row = Record<string, any>;
 export class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 
@@ -7,7 +8,9 @@ export async function api<T = any>(path: string, o: { method?: string; body?: un
     headers: o.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
     body: o.body !== undefined ? JSON.stringify(o.body) : undefined,
   });
-  if (r.status === 401 && typeof window !== 'undefined' && !location.pathname.startsWith('/login')) location.href = '/login?expired=1';
+  if (r.status === 401 && typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+    window.location.replace(new URL('/login?expired=1', window.location.origin).href);
+  }
   if (!r.ok) {
     let m = `Request failed (${r.status})`;
     try {
