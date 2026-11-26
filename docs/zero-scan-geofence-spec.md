@@ -36,7 +36,7 @@ watchPosition (high accuracy)
 
 | Parameter | Value | Rationale |
 |---|---|---|
-| Maximum accepted GPS error | `50 m` | Rejects coarse cell-tower/Wi-Fi fixes that trigger false arrivals |
+| Maximum accepted GPS error | `80 m` | Rejects coarse cell-tower/Wi-Fi fixes while staying resilient in urban canyons |
 | Entry radius | `65 m` | Balances urban UAE GPS drift (`10–35 m`) against container spacing |
 | Exit hysteresis radius | `95 m` | Prevents boundary jitter from resetting the dwell timer |
 | Dwell threshold | `45 s` | Filters drive-bys and brief traffic stops near a container |

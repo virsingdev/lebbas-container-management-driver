@@ -498,20 +498,24 @@ The following must be verified:
 
 Do not assume that every API operation supports offline synchronization.
 
-## 9. GPS and Route Tracking
+## 9. GPS, Route Tracking, and Zero-Scan Pickup Detection
 
 Use the browser Geolocation API with explicit driver permission.
 
-Display:
+The Driver PWA includes **Zero-Scan Pickup Detection** (`GPS Geofencing + Dwell Time Detection`) in `src/lib/geofence.ts` and `src/components/GeofenceMonitor.tsx` (see [docs/zero-scan-geofence-spec.md](docs/zero-scan-geofence-spec.md)):
 
-- GPS permission state
-- Latitude and longitude
-- Location accuracy
-- Last location update
+- **Foreground GPS monitoring:** Watches driver position with automatic coarse-location fallback when high-accuracy GPS times out indoors, plus Screen Wake Lock while open.
+- **Geofence + dwell detection:** Enters at `65 m` (with `95 m` exit hysteresis, `80 m` max GPS accuracy filter, and `45 s` dwell threshold).
+- **Auto-arrival & 1-tap confirmation:** Automatically enqueues `arrived` for `in_progress`/`assigned` stops once dwelled and displays an approaching countdown bar followed by a 1-tap **Confirm pickup** prompt (with quick-select weight and bag chips) without requiring a QR scan.
+- **Map & diagnostics:** The Map screen renders `65 m` detection zones around open stops and displays live accuracy, nearest container distance, and detector status.
 
-The current backend specification does not clearly establish a dedicated continuous driver GPS tracking endpoint.
+### Zero-Scan Tracking Approaches & Roadmap
 
-GPS data may currently be included in stop updates, subject to the actual request schema.
+| Approach | How It Works | Accuracy | Cost & Effort | Status |
+|---|---|---|---|---|
+| 1. GPS Geofence + Dwell Time (Recommended) | Foreground GPS pings + `65 m` radius + `45 s` dwell marks `arrived` and opens 1-tap **Confirm Pickup** | 10–50 m (outdoors) | \$0 hardware (driver smartphones + FastAPI/PostGIS) | Implemented in PWA (`POST /driver/sync`); batched `POST /driver/location` proposed |
+| 2. Vehicle GPS Tracker (OBD / Hardwired) | Connects to Nissan Urvan fleet GPS telemetry API and matches vehicle coordinates to containers | 5–20 m | Medium hardware cost; works if phone dies/closes | Planned backend integration |
+| 3. BLE Beacons | Battery-powered BLE beacon per container detected within 5–15 m | 2–15 m (indoor/covered) | ~\$8–\$15/container + Capacitor/React Native wrapper | Optional future native phase |
 
 ### Proposed future backend capabilities
 
@@ -534,7 +538,7 @@ For the Admin Dashboard:
 
 These are proposed endpoints, not confirmed existing APIs.
 
-**PWA limitation:** Browser-based GPS tracking is not guaranteed to continue when the application is closed or suspended. Reliable continuous background tracking may require a native mobile application.
+**PWA limitation:** Browser-based GPS tracking is not guaranteed to continue when the application is closed or suspended. Reliable continuous background tracking or background BLE scanning requires a native mobile wrapper (Capacitor/React Native) or vehicle OBD telematics.
 
 ## 10. Photo Upload Limitation
 

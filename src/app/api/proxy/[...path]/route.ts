@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { API, clearTokens, refresh, setTokens, type Tokens } from '@/lib/server';
 
 // params is a plain object in Next 14 and a Promise in Next 15+; this signature and `await` accept both.
-async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> | { path: string[] } }) {
+async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
   const url = `${API}/${path.join('/')}${req.nextUrl.search}`;
   const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.text();

@@ -2,11 +2,12 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
-import { LocateFixed } from 'lucide-react';
+import { LocateFixed, Radar, RefreshCw } from 'lucide-react';
 import { pickRoute, summarize, useOverlay, useRoutes } from '@/lib/hooks';
-import { useGeoPermission } from '@/lib/geo';
+import { formatDistance, useGeoPermission } from '@/lib/geo';
+import { DWELL_MS, hasValidCoords } from '@/lib/geofence';
 import { useGeofence } from '@/components/GeofenceMonitor';
-import { Card, Empty, Skeleton } from '@/components/ui';
+import { Badge, Card, Empty, Skeleton } from '@/components/ui';
 import type { MapStop } from '@/components/MapView';
 
 const MapView = dynamic(() => import('@/components/MapView'), { ssr: false, loading: () => <Skeleton rows={3} /> });
@@ -16,94 +17,168 @@ export default function MapPage() {
   const routes = useRoutes();
   const ov = useOverlay();
   const perm = useGeoPermission();
-  const { fix: geoFix, nearby } = useGeofence();
-  const [me, setMe] = useState<Me | null>(null);
-  const [gErr, setGErr] = useState('');
+  const { enabled, fix: geoFix, nearby, closest, detectorState, geoError, refreshGps } = useGeofence();
+  const [localMe, setLocalMe] = useState<Me | null>(null);
+  const [localErr, setLocalErr] = useState('');
   const [tick, setTick] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
+  // Only run a separate map watch if the global geofence detector is turned off.
   useEffect(() => {
+    if (enabled || typeof navigator === 'undefined' || !navigator.geolocation) return;
     let active = true;
-    if (!navigator.geolocation) {
-      Promise.resolve().then(() => { if (active) setGErr('This device does not support location.'); });
-      return () => { active = false; };
-    }
     const id = navigator.geolocation.watchPosition(
       (p) => {
         if (!active) return;
-        setMe({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, ts: p.timestamp });
-        setGErr('');
+        setLocalMe({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, ts: p.timestamp });
+        setLocalErr('');
       },
       (e) => {
         if (!active) return;
-        setGErr(e.code === 1 ? 'Location permission denied. Allow it in your browser settings.' : 'Location unavailable right now.');
+        setLocalErr(e.code === 1 ? 'Location permission denied. Allow it in your browser settings.' : 'Location unavailable right now.');
       },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 }
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
     );
     return () => {
       active = false;
       navigator.geolocation.clearWatch(id);
     };
-  }, []);
+  }, [enabled]);
 
-  const currentMe: Me | null = me ?? (geoFix ? { lat: geoFix.latitude, lng: geoFix.longitude, acc: geoFix.accuracy, ts: geoFix.ts } : null);
+  const currentMe: Me | null = geoFix
+    ? { lat: geoFix.latitude, lng: geoFix.longitude, acc: geoFix.accuracy, ts: geoFix.ts }
+    : localMe;
+  const err = geoError || localErr;
+
   const route = pickRoute(routes.data?.data);
   const sm = summarize(route, ov);
   const stops: MapStop[] = sm.stops
-    .filter((s) => s.container.latitude && s.container.longitude)
-    .map((s) => ({
-      id: s.id,
-      routeId: route!.id,
-      lat: Number(s.container.latitude),
-      lng: Number(s.container.longitude),
-      code: s.container.container_code,
-      place: s.container.location_name,
-      seq: s.sequence_number,
-      status: sm.eff(s),
-      next: sm.next?.id === s.id,
-    }));
+    .map((s) => {
+      const coords = hasValidCoords(s);
+      if (!coords) return null;
+      return {
+        id: s.id,
+        routeId: route!.id,
+        lat: coords.lat,
+        lng: coords.lng,
+        code: s.container.container_code,
+        place: s.container.location_name,
+        seq: s.sequence_number,
+        status: sm.eff(s),
+        next: sm.next?.id === s.id,
+      };
+    })
+    .filter((x): x is MapStop => x !== null);
+
+  async function handleRefreshGps() {
+    setRefreshing(true);
+    try {
+      await refreshGps();
+      setTick((t) => t + 1);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   return (
     <>
-      <h1 className="text-2xl font-bold tracking-tight">Map</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">Route Map</h1>
+        <button
+          type="button"
+          onClick={handleRefreshGps}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-xs active:bg-slate-50"
+        >
+          <RefreshCw size={13} className={refreshing ? 'animate-spin' : undefined} aria-hidden />
+          Refresh GPS
+        </button>
+      </div>
+
       {routes.isLoading ? (
         <Skeleton rows={2} />
-      ) : !route ? (
-        <Empty>No route for today.</Empty>
-      ) : !stops.length ? (
+      ) : !route && !currentMe ? (
+        <Empty>No route assigned today and GPS is not active yet.</Empty>
+      ) : route && !stops.length && !currentMe ? (
         <Empty>The stops on this route have no saved coordinates.</Empty>
       ) : (
-        <div className="relative h-[55vh] overflow-hidden rounded-2xl border border-slate-200">
+        <div className="relative h-[52vh] min-h-[300px] overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
           <MapView stops={stops} me={currentMe ? { lat: currentMe.lat, lng: currentMe.lng, acc: currentMe.acc } : null} tick={tick} />
           <button
+            type="button"
             onClick={() => setTick((t) => t + 1)}
             disabled={!currentMe}
             aria-label="Centre on my location"
-            className="absolute bottom-4 right-4 z-[1000] rounded-full bg-white p-4 shadow-lg disabled:opacity-40"
+            className="absolute bottom-4 right-4 z-[1000] flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-white text-[#0F766E] shadow-lg active:scale-95 disabled:opacity-40"
           >
-            <LocateFixed className="text-[#0F766E]" />
+            <LocateFixed size={22} />
           </button>
         </div>
       )}
-      <Card className="space-y-1 text-sm">
-        <p className="font-semibold">GPS</p>
-        {gErr ? (
-          <p className="text-red-700">{gErr}</p>
+
+      <Card className="space-y-3 text-sm">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 font-bold text-slate-900">
+            <Radar size={17} className="text-[#0F766E]" aria-hidden />
+            <span>GPS &amp; Zero-Scan Detector</span>
+          </div>
+          <Badge tone={detectorState === 'dwelled' || detectorState === 'scanning' || detectorState === 'approaching' ? 'ok' : detectorState === 'error' ? 'bad' : 'info'}>
+            {detectorState.replace('_', ' ')}
+          </Badge>
+        </div>
+
+        {err && !currentMe ? (
+          <div className="space-y-2 rounded-xl bg-red-50 p-3 text-xs text-red-800">
+            <p>{err}</p>
+            <button
+              type="button"
+              onClick={handleRefreshGps}
+              className="inline-flex items-center gap-1 rounded-lg bg-red-700 px-3 py-1.5 font-semibold text-white"
+            >
+              <LocateFixed size={13} aria-hidden /> Retry GPS
+            </button>
+          </div>
         ) : currentMe ? (
-          <p className="text-slate-600">
-            ±{Math.round(currentMe.acc)} m accuracy · updated {format(currentMe.ts, 'HH:mm:ss')}
-            <br />
-            {currentMe.lat.toFixed(5)}, {currentMe.lng.toFixed(5)}
-          </p>
+          <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+            <p className="font-semibold text-slate-800">
+              Accuracy ±{Math.round(currentMe.acc)} m · updated {format(currentMe.ts, 'HH:mm:ss')}
+            </p>
+            <p className="mt-0.5 font-mono text-[11px] text-slate-500">
+              {currentMe.lat.toFixed(5)}, {currentMe.lng.toFixed(5)}
+            </p>
+          </div>
         ) : (
-          <p className="text-slate-500">{perm === 'denied' ? 'Permission denied.' : 'Waiting for location…'}</p>
+          <div className="flex items-center justify-between rounded-xl bg-amber-50 p-3 text-xs text-amber-900">
+            <span>{perm === 'denied' ? 'Location permission denied.' : 'Waiting for GPS fix…'}</span>
+            <button
+              type="button"
+              onClick={handleRefreshGps}
+              className="rounded-lg bg-amber-600 px-2.5 py-1 font-semibold text-white"
+            >
+              Allow GPS
+            </button>
+          </div>
         )}
-        {nearby && (
-          <p className="text-xs font-semibold text-[#0F766E]">
-            In geofence: {nearby.containerCode} ({Math.round(nearby.distanceM)} m{nearby.dwelled ? ' · dwelled' : ' · detecting…'})
+
+        {nearby ? (
+          <div className="rounded-xl border border-teal-200 bg-[#F0FDFA] p-3 text-xs text-[#134E4A]">
+            <p className="font-bold">
+              Inside geofence: {nearby.containerCode} ({formatDistance(nearby.distanceM)})
+            </p>
+            <p className="mt-0.5">
+              {nearby.dwelled
+                ? 'Arrival verified — ready to confirm pickup.'
+                : `Verifying dwell (${Math.round(nearby.dwellMs / 1000)}s / ${Math.round(DWELL_MS / 1000)}s)…`}
+            </p>
+          </div>
+        ) : closest ? (
+          <p className="text-xs font-medium text-slate-600">
+            Nearest open stop: <span className="font-bold text-slate-900">{closest.containerCode}</span> ({formatDistance(closest.distanceM)} away)
           </p>
-        )}
-        <p className="text-xs text-slate-500">
-          Foreground GPS geofencing runs while the app is open; continuous background tracking is not guaranteed by browsers. Map tiles by OpenStreetMap.
+        ) : null}
+
+        <p className="text-[11px] leading-relaxed text-slate-500">
+          Dashed teal circles show the 65 m zero-scan detection zone around open stops. Keep the app open while driving; browsers pause GPS if the screen is locked.
         </p>
       </Card>
     </>

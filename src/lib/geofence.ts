@@ -4,7 +4,7 @@ import { DONE } from './hooks';
 
 export const GEOFENCE_ENTER_M = 65;
 export const GEOFENCE_EXIT_M = 95;
-export const MAX_ACCURACY_M = 50;
+export const MAX_ACCURACY_M = 80;
 export const DWELL_MS = 45_000;
 
 const PREF_KEY = 'lcd_geofence_enabled';
@@ -28,6 +28,25 @@ export type NearbyStop = {
   status: string;
 };
 
+export type ClosestStop = {
+  stopId: string;
+  routeId: string;
+  containerCode: string;
+  locationName: string;
+  distanceM: number;
+  status: string;
+};
+
+export function hasValidCoords(stop: Row): { lat: number; lng: number } | null {
+  const rawLat = stop?.container?.latitude;
+  const rawLng = stop?.container?.longitude;
+  if (rawLat == null || rawLng == null || rawLat === '' || rawLng === '') return null;
+  const lat = Number(rawLat);
+  const lng = Number(rawLng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
+  return { lat, lng };
+}
+
 /** Finds the closest open stop with valid coordinates within `radiusM`. */
 export function findNearestStop(
   fix: Fix,
@@ -40,15 +59,38 @@ export function findNearestStop(
   for (const s of route.stops as Row[]) {
     const status = overlay.get(s.id)?.status ?? s.status;
     if (DONE.includes(status)) continue;
-    const lat = Number(s.container?.latitude);
-    const lng = Number(s.container?.longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) continue;
-    const d = distanceMeters(fix.latitude, fix.longitude, lat, lng);
+    const coords = hasValidCoords(s);
+    if (!coords) continue;
+    const d = distanceMeters(fix.latitude, fix.longitude, coords.lat, coords.lng);
     if (d <= radiusM && (!best || d < best.distanceM)) {
       best = { stop: s, distanceM: d, status };
     }
   }
   return best;
+}
+
+function buildExistingNearby(
+  prev: NonNullable<DwellTracker>,
+  route: Row,
+  overlay: Map<string, { status: string }>,
+  distanceM: number,
+  dwellMs: number,
+  dwelled: boolean
+): NearbyStop | null {
+  const existing = (route.stops as Row[]).find((s) => s.id === prev.stopId);
+  if (!existing) return null;
+  const status = overlay.get(existing.id)?.status ?? existing.status;
+  if (DONE.includes(status)) return null;
+  return {
+    stopId: existing.id,
+    routeId: route.id,
+    containerCode: existing.container.container_code,
+    locationName: existing.container.location_name,
+    distanceM,
+    dwellMs,
+    dwelled,
+    status,
+  };
 }
 
 /**
@@ -62,9 +104,32 @@ export function stepDwellTracker(
   route: Row | undefined,
   overlay: Map<string, { status: string }>,
   now: number
-): { tracker: DwellTracker; nearby: NearbyStop | null } {
-  if (!route || fix.accuracy > MAX_ACCURACY_M) {
-    return { tracker: prev, nearby: null };
+): { tracker: DwellTracker; nearby: NearbyStop | null; closest: ClosestStop | null; accuracyTooLow: boolean } {
+  if (!route) {
+    return { tracker: null, nearby: null, closest: null, accuracyTooLow: false };
+  }
+
+  const closestHit = findNearestStop(fix, route, overlay, Infinity);
+  const closest: ClosestStop | null = closestHit
+    ? {
+        stopId: closestHit.stop.id,
+        routeId: route.id,
+        containerCode: closestHit.stop.container.container_code,
+        locationName: closestHit.stop.container.location_name,
+        distanceM: closestHit.distanceM,
+        status: closestHit.status,
+      }
+    : null;
+
+  if (fix.accuracy > MAX_ACCURACY_M) {
+    // Preserve an active approach if a single noisy GPS reading arrives so the dwell timer doesn't reset.
+    if (prev && prev.routeId === route.id) {
+      const preserved = buildExistingNearby(prev, route, overlay, prev.distanceM, now - prev.enteredAt, prev.dwelled);
+      if (preserved) {
+        return { tracker: prev, nearby: preserved, closest, accuracyTooLow: true };
+      }
+    }
+    return { tracker: prev, nearby: null, closest, accuracyTooLow: true };
   }
 
   // Keep tracking the currently dwelled/entered stop until the driver exits 95m or finishes it.
@@ -72,10 +137,9 @@ export function stepDwellTracker(
     const existing = (route.stops as Row[]).find((s) => s.id === prev.stopId);
     const status = existing ? overlay.get(existing.id)?.status ?? existing.status : 'completed';
     if (existing && !DONE.includes(status)) {
-      const lat = Number(existing.container?.latitude);
-      const lng = Number(existing.container?.longitude);
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        const d = distanceMeters(fix.latitude, fix.longitude, lat, lng);
+      const coords = hasValidCoords(existing);
+      if (coords) {
+        const d = distanceMeters(fix.latitude, fix.longitude, coords.lat, coords.lng);
         if (d <= GEOFENCE_EXIT_M) {
           const dwellMs = now - prev.enteredAt;
           const dwelled = prev.dwelled || dwellMs >= DWELL_MS;
@@ -92,6 +156,8 @@ export function stepDwellTracker(
               dwelled,
               status,
             },
+            closest,
+            accuracyTooLow: false,
           };
         }
       }
@@ -99,7 +165,7 @@ export function stepDwellTracker(
   }
 
   const nearest = findNearestStop(fix, route, overlay, GEOFENCE_ENTER_M);
-  if (!nearest) return { tracker: null, nearby: null };
+  if (!nearest) return { tracker: null, nearby: null, closest, accuracyTooLow: false };
 
   const tracker: DwellTracker = {
     stopId: nearest.stop.id,
@@ -120,6 +186,8 @@ export function stepDwellTracker(
       dwelled: false,
       status: nearest.status,
     },
+    closest,
+    accuracyTooLow: false,
   };
 }
 

@@ -16,15 +16,48 @@ export function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: n
   return 2 * EARTH_RADIUS_M * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-export function getFix(timeout = 8000): Promise<Fix | null> {
+export function formatDistance(meters: number): string {
+  if (!Number.isFinite(meters)) return '—';
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
+function readPosition(options: PositionOptions): Promise<{ fix: Fix | null; denied: boolean }> {
   return new Promise((res) => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return res(null);
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      return res({ fix: null, denied: false });
+    }
     navigator.geolocation.getCurrentPosition(
-      (p) => res({ latitude: p.coords.latitude, longitude: p.coords.longitude, accuracy: p.coords.accuracy, ts: p.timestamp }),
-      () => res(null),
-      { enableHighAccuracy: true, timeout, maximumAge: 15000 }
+      (p) =>
+        res({
+          fix: {
+            latitude: p.coords.latitude,
+            longitude: p.coords.longitude,
+            accuracy: p.coords.accuracy,
+            ts: p.timestamp,
+          },
+          denied: false,
+        }),
+      (err) => res({ fix: null, denied: err.code === 1 }),
+      options
     );
   });
+}
+
+export async function getFixWithStatus(timeout = 8000): Promise<{ fix: Fix | null; denied: boolean }> {
+  const hi = await readPosition({ enableHighAccuracy: true, timeout, maximumAge: 15000 });
+  if (hi.fix || hi.denied) return hi;
+  // Fallback to network/coarse location if high-accuracy GPS times out indoors or on desktop.
+  return readPosition({
+    enableHighAccuracy: false,
+    timeout: Math.min(timeout, 6000),
+    maximumAge: 60000,
+  });
+}
+
+export async function getFix(timeout = 8000): Promise<Fix | null> {
+  const res = await getFixWithStatus(timeout);
+  return res.fix;
 }
 
 export type GeoPerm = 'granted' | 'denied' | 'prompt' | 'unsupported';
