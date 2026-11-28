@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- backend payloads are normalised at the edges */
+import { sanitizeCoords } from './coords';
 export type Row = Record<string, any>;
 export class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 
@@ -6,7 +7,7 @@ export async function api<T = any>(path: string, o: { method?: string; body?: un
   const r = await fetch('/api/proxy' + path, {
     method: o.method ?? 'GET', cache: 'no-store', signal: o.signal,
     headers: o.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: o.body !== undefined ? JSON.stringify(o.body) : undefined,
+    body: o.body !== undefined ? JSON.stringify(sanitizeCoords(o.body)) : undefined, // GPS doubles -> 6 dp (backend Decimal limit)
   });
   if (r.status === 401 && typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
     window.location.replace(new URL('/login?expired=1', window.location.origin).href);

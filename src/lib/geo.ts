@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { roundCoord, roundTo } from './coords';
 
 export type Fix = { latitude: number; longitude: number; accuracy: number; ts: number };
 
@@ -31,9 +32,9 @@ function readPosition(options: PositionOptions): Promise<{ fix: Fix | null; deni
       (p) =>
         res({
           fix: {
-            latitude: p.coords.latitude,
-            longitude: p.coords.longitude,
-            accuracy: p.coords.accuracy,
+            latitude: roundCoord(p.coords.latitude),
+            longitude: roundCoord(p.coords.longitude),
+            accuracy: roundTo(p.coords.accuracy, 1),
             ts: p.timestamp,
           },
           denied: false,

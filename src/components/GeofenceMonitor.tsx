@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { CheckCircle2, MapPin, Navigation, Radar, X } from 'lucide-react';
 import { uid, type Row } from '@/lib/api';
 import { formatDistance, getFixWithStatus, type Fix } from '@/lib/geo';
+import { roundCoord, roundTo } from '@/lib/coords';
 import {
   DWELL_MS,
   getGeofenceEnabled,
@@ -202,9 +203,9 @@ export function GeofenceProvider({ children }: { children: ReactNode }) {
         (p) => {
           if (!active) return;
           const nextFix: Fix = {
-            latitude: p.coords.latitude,
-            longitude: p.coords.longitude,
-            accuracy: p.coords.accuracy,
+            latitude: roundCoord(p.coords.latitude),
+            longitude: roundCoord(p.coords.longitude),
+            accuracy: roundTo(p.coords.accuracy, 1),
             ts: p.timestamp,
           };
           fixRef.current = nextFix;

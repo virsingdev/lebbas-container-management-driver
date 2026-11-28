@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { API, clearTokens, refresh, setTokens, type Tokens } from '@/lib/server';
+import { sanitizeCoords } from '@/lib/coords';
 
 // params is a plain object in Next 14 and a Promise in Next 15+; this signature and `await` accept both.
 async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;
   const url = `${API}/${path.join('/')}${req.nextUrl.search}`;
-  const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.text();
+  let body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.text();
+  // Safety net: older cached app versions may still send raw GPS doubles; the API accepts at most 10 digits in total.
+  if (body) { try { body = JSON.stringify(sanitizeCoords(JSON.parse(body))); } catch { /* not JSON: send as is */ } }
   const rt = req.cookies.get('lcd_rt')?.value;
   let at = req.cookies.get('lcd_at')?.value;
   let fresh: Tokens | null = null;
